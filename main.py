@@ -81,7 +81,7 @@ if __name__ == '__main__':
     input_dim = 8
     hidden_dim = 512
     step = 5
-    batch_size = 512
+    batch_size = 256
     epochs = 500
     grad_clip = 5.
     print_freq = 10

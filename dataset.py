@@ -47,14 +47,20 @@ class NeuralNetworkDataset(Dataset):
         self.df.drop("date", axis=1, inplace=True)
         col_list = [col for col in self.df.columns if 'Flotation' not in col ]
         self.df = self.df[col_list]
+
+        samples = int(len(self.df) / 180)
         if self.split == "train":
-            samples = int(len(self.df)/180)
             lis = [(list(range(170 + i * 180, 180 + i * 180))) for i in range(samples)]
             ind = np.concatenate(lis)
             self.df = self.df.iloc[ind]
             self.dataset_size = int(len(self.df))
+            print("Train: ", self.dataset_size)
         else:
-            self.dataset_size = int(len(self.df)/180)
+            lis = [(list(range(179 + i * 180, 180 + i * 180))) for i in range(samples)]
+            ind = np.concatenate(lis)
+            self.df = self.df.iloc[ind]
+            self.dataset_size = int(len(self.df))
+            print("Test: ", self.dataset_size)
 
     def __getitem__(self, i):
         """
@@ -71,9 +77,9 @@ class NeuralNetworkDataset(Dataset):
             return x_ori, y_ori
 
         else:
-            x_ori = torch.from_numpy(self.df.iloc[i*180:180 + i * 180, :-1].values).float().to(device)
-            y_ori = torch.Tensor(self.df.iloc[i*180:180 + i * 180, -1].values).float().to(device)
-            return x_ori[-1], y_ori[-1]
+            x_ori = torch.from_numpy(self.df.iloc[i, :-1].values).float().to(device)
+            y_ori = torch.Tensor([self.df.iloc[i, -1]]).float().to(device)
+            return x_ori, y_ori
 
     def __len__(self):
         return self.dataset_size

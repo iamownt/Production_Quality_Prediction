@@ -51,8 +51,8 @@ class NN(nn.Module):
 
 
 dnn_input = 8
-batch_size = 2048
-epochs = 50
+batch_size = 1024
+epochs = 40
 print_freq = 10
 epochs_since_improvement = 0
 output_folder = r"D:\Datasets\Mining_output"
@@ -60,7 +60,7 @@ train_left_des = r"D:\Users\wt\Downloads\production_quality_prediction\train_lef
 test_left_des = r"D:\Users\wt\Downloads\production_quality_prediction\test_left.csv"
 dnn_model = NN(dnn_input, 256, 128, 1)
 criterion = nn.MSELoss().to(device)
-optimizer = Adam(dnn_model.parameters(), lr=0.01)
+optimizer = Adam(dnn_model.parameters(), lr=3e-4)
 train_loader = DataLoader(NeuralNetworkDataset(train_left_des, "train"), batch_size=batch_size, shuffle=True,
                           pin_memory=True)
 test_loader = DataLoader(NeuralNetworkDataset(test_left_des, "test"), batch_size=744, shuffle=False,
