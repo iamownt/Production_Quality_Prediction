@@ -38,7 +38,7 @@ class NeuralNetworkDataset(Dataset):
     """
     Create for a simple DNN input
     """
-    def __init__(self, data_des, split, last_item=10):
+    def __init__(self, data_des, split, last_item=5):
 
         self.split = split
         assert(self.split in {"train", "test"})
@@ -50,7 +50,8 @@ class NeuralNetworkDataset(Dataset):
 
         samples = int(len(self.df) / 180)
         if self.split == "train":
-            lis = [(list(range(170 + i * 180, 180 + i * 180))) for i in range(samples)]
+            # self.df.iloc[:, -1] = (self.df.iloc[:, -1] - 2.24) / 1.11
+            lis = [(list(range(180 + i * 180 - self.last_item, 180 + i * 180))) for i in range(samples)]
             ind = np.concatenate(lis)
             self.df = self.df.iloc[ind]
             self.dataset_size = int(len(self.df))
@@ -83,3 +84,60 @@ class NeuralNetworkDataset(Dataset):
 
     def __len__(self):
         return self.dataset_size
+
+
+class CriteoDataset(Dataset):
+    """
+    Custom dataset class for Criteo dataset in order to use efficient
+    dataloader tool provided by PyTorch.
+    """
+
+    def __init__(self, root, train=True):
+        """
+        Initialize file path and train/test mode.
+
+        Inputs:
+        - root: Path where the processed data file stored.
+        - train: Train or test. Required.
+        """
+        self.root = root
+        self.train = train
+
+        if not self._check_exists:
+            raise RuntimeError('Dataset not found.')
+
+        if self.train:
+            data = pd.read_csv(os.path.join(root, 'train0515_4.csv')).iloc[1000:]  # 'train.txt'
+            data.iloc[:, -1] = (data.iloc[:, -1] - 2.24) / 1.11  # - 0.6)/(5.53-0.6)
+            self.train_data = data.iloc[:, 1:8].values
+            self.traindnn_data = data.iloc[:, 8:-1].values
+            self.target = data.iloc[:, -1].values
+        else:
+            data = pd.read_csv(os.path.join(root, 'test0512.csv'))
+            self.test_data = data.iloc[:, 1:8].values
+            self.testdnn_data = data.iloc[:, 8:-1].values
+            self.target = data.iloc[:, -1].values
+
+    def __getitem__(self, idx):
+        if self.train:
+            dataI, dataD, targetI = self.train_data[idx, :], self.traindnn_data[idx, :], self.target[idx]
+            Xi = torch.from_numpy(dataI.astype(np.int32)).unsqueeze(-1)
+            Xv = torch.from_numpy(np.ones_like(dataI))
+            Xd = torch.from_numpy(dataD.astype(np.float32))  # .unsqueeze(-1)
+            return Xi, Xv, targetI, Xd
+        else:
+            dataI, dataD, targetI = self.test_data[idx, :], self.testdnn_data[idx, :], self.target[idx]  ##.iloc
+            Xi = torch.from_numpy(dataI.astype(np.int32)).unsqueeze(-1)
+            Xv = torch.from_numpy(np.ones_like(dataI))
+            Xd = torch.from_numpy(dataD.astype(np.float32))  # .unsqueeze(-1)
+
+            return Xi, Xv, targetI, Xd
+
+    def __len__(self):
+        if self.train:
+            return len(self.train_data)
+        else:
+            return len(self.test_data)
+
+    def _check_exists(self):
+        return os.path.exists(self.root)

@@ -14,6 +14,69 @@ from torchfm.layer import FactorizationMachine, FeaturesEmbedding, FeaturesLinea
 
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
+import torch
+from torch.utils.data import Dataset
+import pandas as pd
+import numpy as np
+import os
+
+
+class CriteoDataset(Dataset):
+    """
+    Custom dataset class for Criteo dataset in order to use efficient
+    dataloader tool provided by PyTorch.
+    """
+
+    def __init__(self, root, train=True):
+        """
+        Initialize file path and train/test mode.
+
+        Inputs:
+        - root: Path where the processed data file stored.
+        - train: Train or test. Required.
+        """
+        self.root = root
+        self.train = train
+
+        if not self._check_exists:
+            raise RuntimeError('Dataset not found.')
+
+        if self.train:
+            data = pd.read_csv(os.path.join(root, 'train0515_4.csv')).iloc[1000:]  # 'train.txt'
+            # data.iloc[:, -1] = (data.iloc[:, -1] - 2.24) / 1.11  # - 0.6)/(5.53-0.6)
+            self.train_data = data.iloc[:, 1:8].values
+            self.traindnn_data = data.iloc[:, 8:-1].values
+            self.target = data.iloc[:, -1].values
+        else:
+            data = pd.read_csv(os.path.join(root, 'test0512.csv'))
+            self.test_data = data.iloc[:, 1:8].values
+            self.testdnn_data = data.iloc[:, 8:-1].values
+            self.target = data.iloc[:, -1].values
+
+    def __getitem__(self, idx):
+        if self.train:
+            dataI, dataD, targetI = self.train_data[idx, :], self.traindnn_data[idx, :], self.target[idx]
+            Xi = torch.from_numpy(dataI.astype(np.long)).long()
+            Xv = torch.from_numpy(np.ones_like(dataI))
+            Xd = torch.from_numpy(dataD.astype(np.float32))  # .unsqueeze(-1)
+            targetI = torch.Tensor([targetI])
+            return Xi, Xv, targetI, Xd
+        else:
+            dataI, dataD, targetI = self.test_data[idx, :], self.testdnn_data[idx, :], self.target[idx]  ##.iloc
+            Xi = torch.from_numpy(dataI.astype(np.long)).long()
+            Xv = torch.from_numpy(np.ones_like(dataI))
+            Xd = torch.from_numpy(dataD.astype(np.float32))  # .unsqueeze(-1)
+            targetI = torch.Tensor([targetI])
+            return Xi, Xv, targetI, Xd
+
+    def __len__(self):
+        if self.train:
+            return len(self.train_data)
+        else:
+            return len(self.test_data)
+
+    def _check_exists(self):
+        return os.path.exists(self.root)
 
 class MyMLP(torch.nn.Module):
 
@@ -23,7 +86,9 @@ class MyMLP(torch.nn.Module):
         for hidden_dim in hidden_dims:
             layers.append(torch.nn.Linear(input_dim, hidden_dim))
             layers.append(torch.nn.BatchNorm1d(hidden_dim))
-            layers.append(torch.nn.LeakyReLU(0.8))
+            # layers.append(torch.nn.LeakyReLU(0.8))
+            # layers.append(torch.nn.PReLU(1, init=0.8))
+            layers.append(torch.nn.ReLU())
             layers.append(torch.nn.Dropout(p=dropout))
             input_dim = hidden_dim
         if output_layer:
@@ -36,46 +101,6 @@ class MyMLP(torch.nn.Module):
         """
         return self.mlp(x)
 
-
-class LSTMEncoder(nn.Module):
-    """Create a LSTMEncoder for the structure1。
-    Args:
-        input_dim: TODO
-        hidden_dim: TODO
-    """
-    def __init__(self, input_dim, hidden_dim, step, drop_out=0.5):
-        super(LSTMEncoder, self).__init__()
-        self.input_dim = input_dim
-        self.hidden_dim = hidden_dim
-        self.step = step
-        self.dropout_rate = drop_out
-        self.linears = nn.ModuleList([nn.Linear(hidden_dim, 1) for _ in range(self.step)])
-        self.cell = nn.LSTMCell(input_dim, hidden_dim, bias=True)
-        self.dropout = nn.Dropout(p=self.dropout_rate)
-
-    def init_hidden_state(self, batch_size):
-        h = torch.zeros(batch_size, self.hidden_dim).to(device)
-        c = torch.zeros(batch_size, self.hidden_dim).to(device)
-        return h, c
-
-    def forward(self, time_series):
-        """
-        :param time_series: the expected time_series shape is (batch_size, time_step, feature_size)
-        :return: h: last cell's hidden dim
-        :return: out_1: (batch_size, 5)
-        """
-        batch_size = time_series.size(0)
-        h, c = self.init_hidden_state(batch_size)
-        out_1 = []
-
-        for i in range(self.step):
-            h, c = self.cell(time_series[:, i, :], (h, c))
-            out_1.append(self.linears[i](c))  # append (B*1)
-
-        out_1 = torch.cat(out_1, dim=1)
-        return h, out_1
-
-
 class MyDeepFM(torch.nn.Module):
     """
     A pytorch implementation of DeepFM.
@@ -86,27 +111,23 @@ class MyDeepFM(torch.nn.Module):
 
     def __init__(self, field_dims, embed_dim, mlp_dims, dropout, addition_input, addition_hiddens):
         super().__init__()
-        self.linear = FeaturesLinear(field_dims)
-        self.fm = FactorizationMachine(reduce_sum=True)
-        self.embedding1 = FeaturesEmbedding(field_dims, embed_dim)
-        self.embedding2 = FeaturesEmbedding(field_dims, embed_dim)
-        self.embed_output_dim = len(field_dims) * embed_dim
-        self.mlp = MultiLayerPerceptron(self.embed_output_dim, mlp_dims, dropout)
+        # self.linear = FeaturesLinear(field_dims)
+        # self.fm = FactorizationMachine(reduce_sum=True)
+        # self.embedding = FeaturesEmbedding(field_dims, embed_dim)
+        # self.embed_output_dim = len(field_dims) * embed_dim
+        # self.mlp = MultiLayerPerceptron(self.embed_output_dim, mlp_dims, dropout)
         self.mlp2 = MyMLP(addition_input, addition_hiddens, dropout=dropout)
-        self.t1 = torch.nn.Parameter(0.5*torch.ones(1))
-        self.t2 = torch.nn.Parameter(0.5*torch.ones(1))
 
     def forward(self, x_sparse, x_dense):
         """
         :param x_dense: Long tensor of size ``(batch_size, num_fields)``
         :param x_sparse: for sparse vector with files
         """
-        embed_x1 = self.embedding1(x_sparse)
-        embed_x2 = self.embedding2(x_sparse)
-        part_1 = self.linear(x_sparse) + self.fm(embed_x1) + self.mlp(embed_x2.view(-1, self.embed_output_dim))
+        # embed_x = self.embedding(x_sparse)
+        # part_1 = self.linear(x_sparse) + self.fm(embed_x) + self.mlp(embed_x.view(-1, self.embed_output_dim))
         part_2 = self.mlp2(x_dense)
-        x = self.t1 * part_1 + self.t2 * part_2
-        # x = part_2
+        # x = part_1 + part_2
+        x = part_2
         return x
 
     def rec(self,old):
@@ -140,7 +161,7 @@ class SingleDeepFMDataset(Dataset):
         # if you want to select some col with col_name, use self.df = self.df[col_list]
         samples = int(len(self.df) / 180)
         if self.split == "train":
-            # self.df.iloc[:, -1] = (self.df.iloc[:, -1] - 2.24) / 1.11
+            self.df.iloc[:, -1] = (self.df.iloc[:, -1] - 2.24) / 1.11
             lis = [(list(range(180 + i * 180 - self.last_item, 180 + i * 180))) for i in range(samples)]
             ind = np.concatenate(lis)
             self.df = self.df.iloc[ind]
@@ -168,28 +189,28 @@ class SingleDeepFMDataset(Dataset):
         return self.dataset_size
 
 
-train_left_des = r"D:\Datasets\MiningProcessEngineering\train_left_now.csv"
-test_left_des = r"D:\Datasets\MiningProcessEngineering\test_left_now.csv"
-train_left_now = pd.read_csv(train_left_des)
-test_left_now = pd.read_csv(test_left_des)
-train_left_now.drop("date", axis=1, inplace=True)
-test_left_now.drop("date", axis=1, inplace=True)
-
-dense_features = [col for col in train_left_now.columns if "bin" not in col and col != "% Silica Concentrate"]
-sparse_features = [col for col in train_left_now.columns if col not in dense_features and col != "% Silica Concentrate"]
-train_left_now[sparse_features] = train_left_now[sparse_features].astype('long')
-test_left_now[sparse_features] = test_left_now[sparse_features].astype('long')
+# train_left_des = r"D:\Datasets\MiningProcessEngineering\train_left_now.csv"
+# test_left_des = r"D:\Datasets\MiningProcessEngineering\test_left_now.csv"
+# train_left_now = pd.read_csv(train_left_des)
+# test_left_now = pd.read_csv(test_left_des)
+# train_left_now.drop("date", axis=1, inplace=True)
+# test_left_now.drop("date", axis=1, inplace=True)
+#
+# dense_features = [col for col in train_left_now.columns if "bin" not in col and col != "% Silica Concentrate"]
+# sparse_features = [col for col in train_left_now.columns if col not in dense_features and col != "% Silica Concentrate"]
+# train_left_now[sparse_features] = train_left_now[sparse_features].astype('long')
+# test_left_now[sparse_features] = test_left_now[sparse_features].astype('long')
 
 
 # 4 is the bin size
-field_dims = [4 for _ in range(len(sparse_features))]
-embed_dim = 5
+field_dims = [31,31,32,25,35,42,18]
+embed_dim = 4
 mlp_dims = (128, 128)
 addition_hiddens = (256, 256, 32)
-dropout = 0.5
+dropout = 0
 
-batch_size = 100
-epochs = 150
+batch_size = 150
+epochs = 5000
 print_freq = 600
 count = 0
 
@@ -197,19 +218,19 @@ train_loss = []
 test_loss = []
 
 dfm_model = MyDeepFM(field_dims=field_dims, embed_dim=embed_dim, mlp_dims=mlp_dims, dropout=dropout,
-                     addition_input=len(dense_features), addition_hiddens=addition_hiddens)
+                     addition_input=10, addition_hiddens=addition_hiddens)
 dfm_model._initialize_weights()
 
 criterion = nn.MSELoss().to(device)
-optimizer = Adam(dfm_model.parameters(), lr=3e-4, weight_decay=0.001)  # 3e-4 is recommend!
-train_loader = DataLoader(SingleDeepFMDataset(train_left_now, "train", 2), batch_size=batch_size,
+optimizer = Adam(dfm_model.parameters(), lr=0.0003, weight_decay=1e-4)  # 3e-4 is recommend!
+train_loader = DataLoader(CriteoDataset(r'C:\Users\wt\Desktop', train=True), batch_size=batch_size,
                           shuffle=True)
-test_loader = DataLoader(SingleDeepFMDataset(test_left_now, "test"), batch_size=744, shuffle=False)
+test_loader = DataLoader(CriteoDataset(r'C:\Users\wt\Desktop', train=False), batch_size=744, shuffle=False)
 
 # 我想做的是每个iteration进行训练，我觉得epoch去评估训练集，或者几个iteration去评估，但是eval得每个iter。
 for epoch in range(epochs):
     # losses = AverageMeter()
-    for i, (input_sparse, input_dense, label) in enumerate(train_loader):
+    for i, (input_sparse, abee, label, input_dense) in enumerate(train_loader):
         count += 1
         dfm_model.train()
         target = dfm_model(input_sparse, input_dense)
@@ -225,8 +246,7 @@ for epoch in range(epochs):
         if i % print_freq == 0:
             dfm_model.eval()
             with torch.no_grad():
-                for _, (input_sparse, input_dense, label) in enumerate(test_loader):
-                    label = label
+                for _, (input_sparse, abee, label, input_dense) in enumerate(test_loader):
                     target = dfm_model(input_sparse, input_dense)
                     # recy = dfm_model.rec(target)
                     loss = criterion(target, label)

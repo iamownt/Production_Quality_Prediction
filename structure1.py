@@ -56,7 +56,7 @@ class DNNDecoder(nn.Module):
     with the hidden component's shape 512
     """
 
-    def __init__(self, D_in, H1, H2, dropout=0.5):
+    def __init__(self, D_in, H1, H2, hidden_size, dropout=0.5):
         super(DNNDecoder, self).__init__()
 
         self.D_in = D_in
@@ -73,11 +73,11 @@ class DNNDecoder(nn.Module):
         self.bn2 = nn.BatchNorm1d(H2)
         self.dropout1 = nn.Dropout(p=self.dropout_rate)
         self.dropout2 = nn.Dropout(p=self.dropout_rate)
+        self.linear_tr = nn.Linear(hidden_size, self.H1)
 
     def forward(self, x, hidden_component):
 
-        hidden_size = hidden_component.size(1)
-        self.linear_tr = nn.Linear(hidden_size, self.H1)
+        # 不能把linear_tr定义在这里，随着输入决定，因为如果这样子，每次调用forward方法就会重置一次nn.Linear!!!!
         hidden = self.relu_tr(self.linear_tr(hidden_component))
         x = self.fc1(x)
         # x = self.bn1(x)

@@ -44,3 +44,26 @@ def adjust_learning_rate(optimizer, shrink_factor):
     for param_group in optimizer.param_groups:
         param_group['lr'] = param_group['lr'] * shrink_factor
     print("The new learning rate is %f\n" % (optimizer.param_groups[0]['lr'],))
+
+import numpy as np
+import os
+import matplotlib.pyplot as plt
+from matplotlib.ticker import StrMethodFormatter
+
+
+def do_some_viz(preds, labels, des, name):
+    """
+    假设这里有两个输入， predictions和labels， 做两件事：
+    1：保存图像  2：作图，当labels中元素增大时候，error的变化，
+    :param preds: input predictions
+    :param labels: input labels
+    :return: xx
+    """
+    error = preds - labels
+    ind = np.argsort(labels.ravel())
+    resort = error[ind]
+    plt.plot(labels[ind], np.square(np.abs(resort)), 'b.', linewidth=3, label="error subject to label")
+    plt.gca().yaxis.set_major_formatter(StrMethodFormatter('{x:,.0f}'))
+    plt.gca().yaxis.set_major_formatter(StrMethodFormatter('{x:,.2f}'))
+    plt.savefig(os.path.join(des, name))
+    plt.show()
