@@ -45,7 +45,10 @@ class NeuralNetworkDataset(Dataset):
         self.last_item = last_item
         self.df = pd.read_csv(data_des)
         self.df.drop("date", axis=1, inplace=True)
-        col_list = [col for col in self.df.columns if 'Flotation' not in col ]
+        col_leave = ['% Silica Feed', 'Starch Flow', 'Amina Flow', 'Ore Pulp Flow', 'Ore Pulp pH', 'Ore Pulp Density',
+                     'Flotation Column 07 Air Flow', 'Flotation Column 03 Level', 'Flotation Column 07 Level',
+                     '% Silica Concentrate', '2_hour_delay', '3_hour_delay']
+        col_list = [col for col in self.df.columns if col in col_leave]
         self.df = self.df[col_list]
 
         samples = int(len(self.df) / 180)
