@@ -14,7 +14,6 @@ class MiningDataset(Dataset):
     def __init__(self, data_des, last_item=10):
 
         self.last_item = last_item
-        # self.df = pd.read_csv(data_des).iloc[:128*180,:]
         self.df = pd.read_csv(data_des)
         self.df.drop("date", axis=1, inplace=True)
         col_list = [col for col in self.df.columns if 'Flotation' not in col ]
