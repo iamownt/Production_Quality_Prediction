@@ -17,12 +17,16 @@ pd.set_option('display.max_rows', 200)
 
 class LSTM(nn.Module):
 
-    def __init__(self, input_dim, hidden_dim, step, drop_out=0.5):
+    def __init__(self, input_dim, hidden_dim, mlp_dims, step, drop_out=0.5):
         super(LSTM, self).__init__()
         self.step = step
         self.dropout_rate = drop_out
         self.hidden_dim = hidden_dim
-        self.fc1 = nn.Linear(hidden_dim, 1)
+        self.fc1 = nn.Linear(hidden_dim, mlp_dims[0])
+        self.fc2 = nn.Linear(mlp_dims[0], mlp_dims[1])
+        self.fc3 = nn.Linear(mlp_dims[1], 1)
+        self.relu1 = nn.LeakyReLU(0.8)
+        self.relu2 = nn.LeakyReLU(0.8)
         self.decoder_step = nn.LSTMCell(input_dim, hidden_dim, bias=True)
         self.dropout = nn.Dropout(p=self.dropout_rate)
 
@@ -44,7 +48,11 @@ class LSTM(nn.Module):
         for i in range(self.step):
             h, c = self.decoder_step(time_series[:, i, :], (h, c))
         out = self.fc1(c)
-        #out = self.dropout(out)
+        out = self.relu1(out)
+        out = self.fc2(out)
+        out = self.relu2(out)
+        out = self.fc3(out)
+        out = self.dropout(out)
 
         return out
 
@@ -80,6 +88,7 @@ if __name__ == '__main__':
 
     input_dim = 8
     hidden_dim = 512
+    mlp_dims = [256, 128]
     step = 5
     batch_size = 256
     epochs = 500
@@ -89,9 +98,9 @@ if __name__ == '__main__':
     output_folder = r"D:\Datasets\Mining_output"
     train_left_des = r"D:\Users\wt\Downloads\production_quality_prediction\train_left.csv"
     test_left_des = r"D:\Users\wt\Downloads\production_quality_prediction\test_left.csv"
-    lstm_model = LSTM(input_dim, hidden_dim, step, 0).to(device)
+    lstm_model = LSTM(input_dim, hidden_dim, mlp_dims, step, 0).to(device)
     criterion = nn.MSELoss().to(device)
-    optimizer = Adam(lstm_model.parameters(), lr=0.003)
+    optimizer = Adam(lstm_model.parameters(), lr=3e-4)
     train_loader = DataLoader(MiningDataset(train_left_des), batch_size=batch_size, shuffle=True, pin_memory=True)
     test_loader = DataLoader(MiningDataset(test_left_des), batch_size=744, shuffle=False, pin_memory=True)#670
     train_loss = []
@@ -146,9 +155,9 @@ if __name__ == '__main__':
             for i, (time_series, label) in enumerate(test_loader):
                 time_series.to(device)
                 label.to(device)
-                label = label[-670:]
-                target = lstm_model(time_series)[-670:]
-                loss = criterion(target, label)
+                label = label
+                target = lstm_model(time_series)
+                loss = criterion(target[-670:], label[-670:])
 
                 losses.update(loss.item())
                 batch_time.update(time.time() - start)

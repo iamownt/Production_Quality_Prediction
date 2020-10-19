@@ -10,30 +10,30 @@ from torch.utils.data import DataLoader, Dataset
 from torch.optim import Adam
 from utils import *
 import sys
-# sys.path.extend(['/Users/wt/Documents/GitHub/pytorch-fm'])
-sys.path.extend(['D:\\Github\\pytorch-fm', 'D:/Github/pytorch-fm'])
-from torchfm.layer import FactorizationMachine, FeaturesEmbedding, FeaturesLinear, MultiLayerPerceptron
+
 
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
 
 class LSTMEncoder(nn.Module):
-    """Create a LSTMEncoder for the MaskModel。
+    """Create a Two Layer LSTMEncoder for the MaskModel。
     Args:
         input_dim: TODO
         hidden_dim: TODO
     """
-    def __init__(self, input_dim, hidden_dim, step, dropout=0.5):
+    def __init__(self, input_dim, hidden_dim, embedding_dim, step, dropout=0.5):
         super(LSTMEncoder, self).__init__()
         self.input_dim = input_dim
         self.hidden_dim = hidden_dim
+        self.embedding_dim = embedding_dim
         self.step = step
-        self.cell = nn.LSTMCell(input_dim, hidden_dim, bias=True)
-        self.dropout = nn.Dropout(p=dropout)
+        self.cell1 = nn.LSTMCell(input_dim, hidden_dim, bias=True)
+        self.cell2 = nn.LSTMCell(hidden_dim, embedding_dim, bias=True)
+        # self.dropout = nn.Dropout(p=dropout)
 
-    def init_hidden_state(self, batch_size):
-        h = torch.zeros(batch_size, self.hidden_dim).to(device)
-        c = torch.zeros(batch_size, self.hidden_dim).to(device)
+    def init_hidden_state(self, batch_size, hidden_dim):
+        h = torch.zeros(batch_size, hidden_dim).to(device)
+        c = torch.zeros(batch_size, hidden_dim).to(device)
         return h, c
 
     def forward(self, time_series):
@@ -42,81 +42,47 @@ class LSTMEncoder(nn.Module):
         :return: h: last cell's hidden dim
         """
         batch_size = time_series.size(0)
-        h, c = self.init_hidden_state(batch_size)
+        h0, c0 = self.init_hidden_state(batch_size, self.hidden_dim)
+        h1, c1 = self.init_hidden_state(batch_size, self.embedding_dim)
 
         for i in range(self.step):
-            h, c = self.cell(time_series[:, i, :], (h, c))
+            h0, c0 = self.cell1(time_series[:, i, :], (h0, c0))
+            h1, c1 = self.cell2(h0, (h1, c1))
 
-        return c
-
-
-class MaskAndConcat(nn.Module):
-    """
-    注意torch.rand放cuda里面。
-    mask1.to(device)，实际上无效，得设置mask1=mask1.to(device)， 但是对于模型来说，只用model.eval()就相当于可以了，不用model=model.eval()
-    """
-    def __init__(self, mask_c, mask_h, tr_in, tr_out):
-        super(MaskAndConcat, self).__init__()
-        self.mask_c = mask_c
-        self.mask_h = mask_h
-        self.fc = nn.Linear(tr_in, tr_out)
-
-    def forward(self, con_in, h_in):
-        # con_in(B, step*D)
-        h_tr = self.fc(h_in)  # (B, h_tr)
-        h_tr = (h_tr - torch.mean(h_tr, dim=0))/torch.std(h_tr, dim=0)
-        mask1 = torch.rand(*con_in.size()) >= self.mask_c
-        mask2 = torch.rand(*h_tr.size()) >= self.mask_h
-        mask1 = mask1.to(device)
-        mask2 = mask2.to(device)
-
-        masked = torch.cat([con_in*mask1, h_tr*mask2], dim=1)
-        ori = torch.cat([con_in, h_tr], dim=1)
-        return ori, masked, mask1, mask2
+        return h1
 
 
-class DeepComponent(nn.Module):
+class LSTMDecoder(nn.Module):
+    """Create a Two Layer LSTMDecoder"""
 
-    """
-    注意模型的输入维度是shape(con_in) + shape(h_tr)， 不能小于中间层，
-    """
-    def __init__(self, input_dim, hidden_dims, dropout):
-        super(DeepComponent, self).__init__()
-        layers = list()
-        input_ori = input_dim
+    def __init__(self, input_dim, hidden_dim, embedding_dim, step):
+        super(LSTMDecoder, self).__init__()
+        self.input_dim = input_dim
+        self.hidden_dim = hidden_dim
+        self.embedding_dim = embedding_dim
+        self.step = step
+        self.cell1 = nn.LSTMCell(embedding_dim, hidden_dim, bias=True)
+        self.cell2 = nn.LSTMCell(hidden_dim, input_dim, bias=True)
 
-        for hidden_dim in (hidden_dims + hidden_dims[::-1][1:]):
-            layers.append(torch.nn.Linear(input_dim, hidden_dim))
-            layers.append(torch.nn.BatchNorm1d(hidden_dim))
-            layers.append(torch.nn.LeakyReLU(0.8))
-            layers.append(torch.nn.Dropout(p=dropout))
-            input_dim = hidden_dim
-        layers.append(torch.nn.Linear(input_dim, input_ori))
-        self.mlp = torch.nn.Sequential(*layers)
+    def init_hidden_state(self, batch_size, hidden_dim):
+        h = torch.zeros(batch_size, hidden_dim).to(device)
+        c = torch.zeros(batch_size, hidden_dim).to(device)
+        return h, c
 
-    def forward(self, x):
-        """
-        :param x: Float tensor of size ``(batch_size, input_dim)``
-        """
-        return self.mlp(x)
+    def forward(self, emb_inp):
+        # 假定emb_inp是一个batch_size * embedding_size的矩阵，那么将它扩充
+        recon_lis = []
+        emb_inp = emb_inp.unsqueeze(1).repeat(1, self.step, 1)
+        batch_size = emb_inp.size(0)
+        h0, c0 = self.init_hidden_state(batch_size, self.hidden_dim)
+        h1, c1 = self.init_hidden_state(batch_size, self.input_dim)
 
+        for i in range(self.step):
+            h0, c0 = self.cell1(emb_inp[:, i, :], (h0, c0))
+            h1, c1 = self.cell2(h0, (h1, c1))
+            recon_lis.append(h1)
 
-class RecLoss(nn.Module):
-
-    def __init__(self, df_std, h_dim, step, bernoulli=True):
-        super(RecLoss, self).__init__()
-        self.bernoulli = bernoulli
-        self.std_1 = torch.from_numpy(df_std.values).float()
-        self.std_1 = torch.cat([self.std_1]*step).to(device)
-        self.std_2 = torch.ones(h_dim).to(device)
-
-    def forward(self, flag, preds, labels, mask):
-
-        y1 = preds * ~mask
-        y2 = labels * ~mask
-        count = torch.sum(~mask)
-        error = y1 - y2
-        return torch.sum((error/self.std_1)**2)/count if flag else torch.sum((error/self.std_2)**2)/count
+        return recon_lis
 
 
 class PretrainDataset(Dataset):
@@ -144,26 +110,6 @@ class PretrainDataset(Dataset):
 
     def __len__(self):
         return self.dataset_size
-
-
-class EncoderDecoderModel(nn.Module):
-
-    def __init__(self, input_dim, hidden_dim, step, mask_c, mask_h, hidden_tr, hidden_list, dropout):
-        super(EncoderDecoderModel, self).__init__()
-        self.lstm = LSTMEncoder(input_dim, hidden_dim, step)
-        self.mask_concat = MaskAndConcat(mask_c, mask_h, hidden_dim, hidden_tr)
-        self.deep = DeepComponent(step*input_dim + hidden_tr, hidden_list, dropout)
-        assert(step*input_dim + hidden_tr > hidden_list[-1])
-
-    def forward(self, time_series):
-
-        batch_size = time_series.size()[0]
-        c_last = self.lstm(time_series)
-        time_re = time_series.reshape(batch_size, -1)
-        ori, con_inp, mask1, mask2 = self.mask_concat(time_re, c_last)
-        deep_out = self.deep(con_inp)
-
-        return deep_out, ori, mask1, mask2
 
 
 input_dim = 11
