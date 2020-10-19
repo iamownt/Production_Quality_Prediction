@@ -14,26 +14,28 @@ import sys
 sys.path.extend(['D:\\Github\\pytorch-fm', 'D:/Github/pytorch-fm'])
 from torchfm.layer import FactorizationMachine, FeaturesEmbedding, FeaturesLinear, MultiLayerPerceptron
 
+
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
 
 class LSTMEncoder(nn.Module):
-    """Create a LSTMEncoder for the MaskModel。
+    """Create a Two Layer LSTMEncoder for the MaskModel。
     Args:
         input_dim: TODO
         hidden_dim: TODO
     """
-    def __init__(self, input_dim, hidden_dim, step, dropout=0.5):
+    def __init__(self, input_dim, hidden_dim, embedding_dim, step):
         super(LSTMEncoder, self).__init__()
         self.input_dim = input_dim
         self.hidden_dim = hidden_dim
+        self.embedding_dim = embedding_dim
         self.step = step
-        self.cell = nn.LSTMCell(input_dim, hidden_dim, bias=True)
-        self.dropout = nn.Dropout(p=dropout)
+        self.cell1 = nn.LSTMCell(input_dim, hidden_dim, bias=True)
+        self.cell2 = nn.LSTMCell(hidden_dim, embedding_dim, bias=True)
 
-    def init_hidden_state(self, batch_size):
-        h = torch.zeros(batch_size, self.hidden_dim).to(device)
-        c = torch.zeros(batch_size, self.hidden_dim).to(device)
+    def init_hidden_state(self, batch_size, hidden_dim):
+        h = torch.zeros(batch_size, hidden_dim).to(device)
+        c = torch.zeros(batch_size, hidden_dim).to(device)
         return h, c
 
     def forward(self, time_series):
@@ -42,12 +44,14 @@ class LSTMEncoder(nn.Module):
         :return: h: last cell's hidden dim
         """
         batch_size = time_series.size(0)
-        h, c = self.init_hidden_state(batch_size)
+        h0, c0 = self.init_hidden_state(batch_size, self.hidden_dim)
+        h1, c1 = self.init_hidden_state(batch_size, self.embedding_dim)
 
         for i in range(self.step):
-            h, c = self.cell(time_series[:, i, :], (h, c))
+            h0, c0 = self.cell1(time_series[:, i, :], (h0, c0))
+            h1, c1 = self.cell2(h0, (h1, c1))
 
-        return c
+        return h1
 
 
 class MaskAndConcat(nn.Module):
@@ -148,17 +152,19 @@ class PretrainDataset(Dataset):
 
 class EncoderDecoderModel(nn.Module):
 
-    def __init__(self, input_dim, hidden_dim, step, mask_c, mask_h, hidden_tr, hidden_list, dropout):
+    def __init__(self, input_dim, hidden_dim, embedding_dim, step, mask_c, mask_h, hidden_tr, hidden_list, dropout):
         super(EncoderDecoderModel, self).__init__()
-        self.lstm = LSTMEncoder(input_dim, hidden_dim, step)
-        self.mask_concat = MaskAndConcat(mask_c, mask_h, hidden_dim, hidden_tr)
+        self.encoder = LSTMEncoder(input_dim, hidden_dim, embedding_dim, step)
+        for p in self.parameters():
+            p.requires_grad = False
+        self.mask_concat = MaskAndConcat(mask_c, mask_h, embedding_dim, hidden_tr)
         self.deep = DeepComponent(step*input_dim + hidden_tr, hidden_list, dropout)
         assert(step*input_dim + hidden_tr > hidden_list[-1])
 
     def forward(self, time_series):
 
         batch_size = time_series.size()[0]
-        c_last = self.lstm(time_series)
+        c_last = self.encoder(time_series)
         time_re = time_series.reshape(batch_size, -1)
         ori, con_inp, mask1, mask2 = self.mask_concat(time_re, c_last)
         deep_out = self.deep(con_inp)
@@ -166,13 +172,38 @@ class EncoderDecoderModel(nn.Module):
         return deep_out, ori, mask1, mask2
 
 
+def load_checkpoint(model, checkpoint, optimizer, loadOptimizer):
+    if checkpoint != 'No':
+        print("loading checkpoint...")
+        model_dict = model.state_dict()
+        modelCheckpoint = torch.load(checkpoint, map_location='cpu')
+        pretrained_dict = modelCheckpoint['state_dict']
+        # 过滤操作
+        new_dict = {k: v for k, v in pretrained_dict.items() if k in model_dict.keys()}
+        model_dict.update(new_dict)
+        # 打印出来，更新了多少的参数
+        print('Total : {}, update: {}'.format(len(pretrained_dict), len(new_dict)))
+        model.load_state_dict(model_dict)
+        print("loaded finished!")
+        # 如果不需要更新优化器那么设置为false
+        if loadOptimizer:
+            optimizer.load_state_dict(modelCheckpoint['optimizer'])
+            print('loaded! optimizer')
+        else:
+            print('not loaded optimizer')
+    else:
+        print('No checkpoint is included')
+    return model, optimizer
+
+
 input_dim = 11
-hidden_dim = 512
+hidden_dim = 256
+embedding_dim = 24
 step = 5
 batch_size = 512
-hidden_tr = 64
-mask_c = 0.5
-mask_h = 0.5
+hidden_tr = 12
+mask_c = 0.15
+mask_h = 0.2
 mlp_list = (512, 256, 64)
 dropout = 0
 epochs = 500
@@ -193,12 +224,15 @@ col_leave = ['% Silica Feed', 'Starch Flow', 'Amina Flow', 'Ore Pulp Flow', 'Ore
 col_list = [col for col in df.columns if col in col_leave]
 df = df[col_list]
 
-ende_model = EncoderDecoderModel(input_dim, hidden_dim, step, mask_c, mask_h, hidden_tr, mlp_list, dropout).to(device)
+ende_model = EncoderDecoderModel(input_dim, hidden_dim, embedding_dim, step, mask_c, mask_h, hidden_tr, mlp_list, dropout).to(device)
+optimizer = Adam(filter(lambda p: p.requires_grad, ende_model.parameters()), lr=3e-4)
+
+path = r"D:\Users\wt\Downloads\52_0.2692.pth.tar"
+ende_model, optimizer = load_checkpoint(ende_model, path, optimizer, False)
+
 criterion = RecLoss(df.std(), hidden_tr, step).to(device)
-optimizer = Adam(ende_model.parameters(), lr=3e-4)
-train_loader = DataLoader(PretrainDataset(train_left_des, step), batch_size=batch_size, shuffle=True, pin_memory=True)
-val_loader = DataLoader(PretrainDataset(val_left_des, step), batch_size=batch_size, shuffle=True, pin_memory=True)
-# shuffle=False
+train_loader = DataLoader(PretrainDataset(train_left_des, step), batch_size=batch_size, shuffle=True)
+val_loader = DataLoader(PretrainDataset(val_left_des, step), batch_size=batch_size, shuffle=True)  # shuffle=False
 best_loss = 999
 for epoch in range(epochs):
     if epochs_since_improvement == 20:

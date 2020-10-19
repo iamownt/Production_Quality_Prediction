@@ -11,7 +11,7 @@ class MiningDataset(Dataset):
     """
     A Pytorch Dataset class to be used in PyTorch DataLoader to create batches
     """
-    def __init__(self, data_des, last_item=10):
+    def __init__(self, data_des, last_item=5):
 
         self.last_item = last_item
         self.df = pd.read_csv(data_des)

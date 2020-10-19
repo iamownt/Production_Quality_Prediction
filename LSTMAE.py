@@ -124,6 +124,29 @@ class PretrainDataset(Dataset):
     def __len__(self):
         return self.dataset_size
 
+def load_checkpoint(model, checkpoint, optimizer, loadOptimizer):
+    if checkpoint != 'No':
+        print("loading checkpoint...")
+        model_dict = model.state_dict()
+        modelCheckpoint = torch.load(checkpoint, map_location='cpu')
+        pretrained_dict = modelCheckpoint['state_dict']
+        # 过滤操作
+        new_dict = {k: v for k, v in pretrained_dict.items() if k in model_dict.keys()}
+        model_dict.update(new_dict)
+        # 打印出来，更新了多少的参数
+        print('Total : {}, update: {}'.format(len(pretrained_dict), len(new_dict)))
+        model.load_state_dict(model_dict)
+        print("loaded finished!")
+        # 如果不需要更新优化器那么设置为false
+        if loadOptimizer:
+            optimizer.load_state_dict(modelCheckpoint['optimizer'])
+            print('loaded! optimizer')
+        else:
+            print('not loaded optimizer')
+    else:
+        print('No checkpoint is included')
+    return model, optimizer
+
 
 input_dim = 11
 hidden_dim = 256
@@ -143,11 +166,11 @@ val_left_des = "/Users/wt/Downloads/MiningProcessEngineering/test_left_now.csv"
 # val_left_des = r"D:\Datasets\MiningProcessEngineering\test_left_now.csv"
 
 
-lstm_ed = LSTMEncoderDecoder(input_dim, hidden_dim, embedding_dim, step)
+lstm_ed = LSTMEncoderDecoder(input_dim, hidden_dim, embedding_dim, step).to(device)
 optimizer = Adam(lstm_ed.parameters(), lr=3e-4)
 criterion = nn.MSELoss().to(device)
-train_loader = DataLoader(PretrainDataset(train_left_des, step), batch_size=batch_size, shuffle=True, pin_memory=True)
-val_loader = DataLoader(PretrainDataset(val_left_des, step), batch_size=batch_size, shuffle=True, pin_memory=True)
+train_loader = DataLoader(PretrainDataset(train_left_des, step), batch_size=batch_size, shuffle=True)
+val_loader = DataLoader(PretrainDataset(val_left_des, step), batch_size=batch_size, shuffle=True)
 # shuffle=False
 best_loss = 999
 for epoch in range(epochs):
@@ -210,7 +233,7 @@ for epoch in range(epochs):
         if True:
             best_loss = val_mse
             epochs_since_improvement = 0
-            torch.save({'epoch': epoch+1, 'state_dict': ende_model.state_dict(), 'best_loss': best_loss,
+            torch.save({'epoch': epoch+1, 'state_dict': lstm_ed.state_dict(), 'best_loss': best_loss,
                         'optimizer': optimizer.state_dict()}, os.path.join(checkpoint_path,
                                                                            str("%d_%.4f.pth.tar" % (epoch, best_loss))))
         else:
