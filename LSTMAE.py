@@ -9,7 +9,6 @@ import torch.nn as nn
 from torch.utils.data import DataLoader, Dataset
 from torch.optim import Adam
 from utils import *
-import sys
 
 
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -21,7 +20,7 @@ class LSTMEncoder(nn.Module):
         input_dim: TODO
         hidden_dim: TODO
     """
-    def __init__(self, input_dim, hidden_dim, embedding_dim, step, dropout=0.5):
+    def __init__(self, input_dim, hidden_dim, embedding_dim, step):
         super(LSTMEncoder, self).__init__()
         self.input_dim = input_dim
         self.hidden_dim = hidden_dim
@@ -29,7 +28,6 @@ class LSTMEncoder(nn.Module):
         self.step = step
         self.cell1 = nn.LSTMCell(input_dim, hidden_dim, bias=True)
         self.cell2 = nn.LSTMCell(hidden_dim, embedding_dim, bias=True)
-        # self.dropout = nn.Dropout(p=dropout)
 
     def init_hidden_state(self, batch_size, hidden_dim):
         h = torch.zeros(batch_size, hidden_dim).to(device)
@@ -57,6 +55,7 @@ class LSTMDecoder(nn.Module):
 
     def __init__(self, input_dim, hidden_dim, embedding_dim, step):
         super(LSTMDecoder, self).__init__()
+        assert(embedding_dim < input_dim * step)  # or the task will be so easy
         self.input_dim = input_dim
         self.hidden_dim = hidden_dim
         self.embedding_dim = embedding_dim
@@ -82,7 +81,21 @@ class LSTMDecoder(nn.Module):
             h1, c1 = self.cell2(h0, (h1, c1))
             recon_lis.append(h1)
 
-        return recon_lis
+        return torch.stack(recon_lis).permute(1, 0, 2)
+
+class LSTMEncoderDecoder(nn.Module):
+    """
+    Use simple two layer LSTM.
+    """
+    def __init__(self, input_dim, hidden_dim, embedding_dim, step):
+        super(LSTMEncoderDecoder, self).__init__()
+        self.encoder = LSTMEncoder(input_dim, hidden_dim, embedding_dim, step)
+        self.decoder = LSTMDecoder(input_dim, hidden_dim, embedding_dim, step)
+
+    def forward(self, x):
+        x = self.encoder(x)
+        x = self.decoder(x)
+        return x
 
 
 class PretrainDataset(Dataset):
@@ -113,45 +126,36 @@ class PretrainDataset(Dataset):
 
 
 input_dim = 11
-hidden_dim = 512
+hidden_dim = 256
+embedding_dim = 24 # very important parameters to use.
 step = 5
 batch_size = 512
-hidden_tr = 64
-mask_c = 0.5
-mask_h = 0.5
-mlp_list = (512, 256, 64)
-dropout = 0
-epochs = 500
+epochs = 100
 grad_clip = 5.
 print_freq = 50
 epochs_since_improvement = 0
-val_samples = 99
-# output_folder = "/Users/wt/Downloads/MiningProcessEngineering"
-# train_left_des = "/Users/wt/Downloads/MiningProcessEngineering/train_left_now.csv"
-output_folder = r"D:\Datasets\Mining_output"
-checkpoint_path = r"D:\Datasets\Mining_output\checkpoint"
-train_left_des = r"D:\Datasets\MiningProcessEngineering\train_left_now.csv"
-val_left_des = r"D:\Datasets\MiningProcessEngineering\test_left_now.csv"
-df = pd.read_csv(train_left_des)
-col_leave = ['% Silica Feed', 'Starch Flow', 'Amina Flow', 'Ore Pulp Flow', 'Ore Pulp pH', 'Ore Pulp Density',
-             'Flotation Column 07 Air Flow', 'Flotation Column 03 Level', 'Flotation Column 07 Level',
-             '2_hour_delay', '3_hour_delay']
-col_list = [col for col in df.columns if col in col_leave]
-df = df[col_list]
+output_folder = "/Users/wt/Downloads/MiningProcessEngineering"
+train_left_des = "/Users/wt/Downloads/MiningProcessEngineering/train_left_now.csv"
+val_left_des = "/Users/wt/Downloads/MiningProcessEngineering/test_left_now.csv"
+# output_folder = r"D:\Datasets\Mining_output"
+# checkpoint_path = r"D:\Datasets\Mining_output\checkpoint"
+# train_left_des = r"D:\Datasets\MiningProcessEngineering\train_left_now.csv"
+# val_left_des = r"D:\Datasets\MiningProcessEngineering\test_left_now.csv"
 
-ende_model = EncoderDecoderModel(input_dim, hidden_dim, step, mask_c, mask_h, hidden_tr, mlp_list, dropout).to(device)
-criterion = RecLoss(df.std(), hidden_tr, step).to(device)
-optimizer = Adam(ende_model.parameters(), lr=3e-4)
+
+lstm_ed = LSTMEncoderDecoder(input_dim, hidden_dim, embedding_dim, step)
+optimizer = Adam(lstm_ed.parameters(), lr=3e-4)
+criterion = nn.MSELoss().to(device)
 train_loader = DataLoader(PretrainDataset(train_left_des, step), batch_size=batch_size, shuffle=True, pin_memory=True)
 val_loader = DataLoader(PretrainDataset(val_left_des, step), batch_size=batch_size, shuffle=True, pin_memory=True)
 # shuffle=False
 best_loss = 999
 for epoch in range(epochs):
-    if epochs_since_improvement == 20:
+    if epochs_since_improvement == 10:
         break
-    if epochs_since_improvement > 0 and epochs_since_improvement % 10 == 0:
+    if epochs_since_improvement > 0 and epochs_since_improvement % 5 == 0:
         adjust_learning_rate(optimizer, 0.8)
-    ende_model.train()
+    lstm_ed.train()
     batch_time = AverageMeter()
     data_time = AverageMeter()
     losses = AverageMeter()
@@ -159,10 +163,8 @@ for epoch in range(epochs):
     for i, time_series in enumerate(train_loader):
         data_time.update(time.time() - start)
         time_series.to(device)
-        re_con, ori_con, mask1, mask2 = ende_model(time_series)
-        loss_tr1 = criterion(1, re_con[:, :-hidden_tr], ori_con[:, :-hidden_tr], mask1)
-        loss_tr2 = criterion(0, re_con[:, -hidden_tr:], ori_con[:, -hidden_tr:], mask2)
-        loss = loss_tr1 + loss_tr2
+        re_con = lstm_ed(time_series)
+        loss = criterion(re_con, time_series)
         optimizer.zero_grad()
         loss.backward()
         if grad_clip is not None:
@@ -186,7 +188,7 @@ for epoch in range(epochs):
                           data_time=data_time,
                           loss=losses))
     # eval the model
-    ende_model.eval()
+    lstm_ed.eval()
     batch_time = AverageMeter()
     val_losses = AverageMeter()
     start = time.time()
@@ -194,11 +196,8 @@ for epoch in range(epochs):
 
         for i, time_series in enumerate(val_loader):
             time_series.to(device)
-            re_con, ori_con, mask1, mask2 = ende_model(time_series)
-            loss_te1 = criterion(1, re_con[:, :-hidden_tr], ori_con[:, :-hidden_tr], mask1)
-            loss_te2 = criterion(0, re_con[:, -hidden_tr:], ori_con[:, -hidden_tr:], mask2)
-            loss = loss_te1 + loss_te2
-
+            re_con = lstm_ed(time_series)
+            loss = criterion(re_con, time_series)
             val_losses.update(loss.item())
             batch_time.update(time.time() - start)
 
@@ -213,11 +212,11 @@ for epoch in range(epochs):
             epochs_since_improvement = 0
             torch.save({'epoch': epoch+1, 'state_dict': ende_model.state_dict(), 'best_loss': best_loss,
                         'optimizer': optimizer.state_dict()}, os.path.join(checkpoint_path,
-                                                                           str("%.4f.pth.tar" % best_loss)))
+                                                                           str("%d_%.4f.pth.tar" % (epoch, best_loss))))
         else:
             epochs_since_improvement += 1
-        print('Validation: [{0}/{1}]\t'
+        print('Validation: [{0}]\t'
               'Batch Time {batch_time.val:.3f} ({batch_time.avg:.3f})\t'
-              'Loss {loss.val:.4f} ({loss.avg:.4f})\t'.format(i, val_samples,
+              'Loss {loss.val:.4f} ({loss.avg:.4f})\t'.format(i,
                                                               batch_time=batch_time,
                                                               loss=val_losses))
