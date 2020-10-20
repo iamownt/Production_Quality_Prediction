@@ -19,19 +19,16 @@ pd.set_option('display.max_rows', 200)
 
 class NN(nn.Module):
 
-    def __init__(self, D_in, H1, H2, H3, D_out, dropout=0.5):
+    def __init__(self, D_in, H1, H2, D_out, dropout=0):
         super(NN, self).__init__()
         self.dropout_rate = dropout
         self.fc1 = nn.Linear(D_in, H1)
         self.fc2 = nn.Linear(H1, H2)
-        self.fc3 = nn.Linear(H2, H3)
-        self.fc4 = nn.Linear(H3, D_out)
+        self.fc3 = nn.Linear(H2, D_out)
         self.bn1 = nn.BatchNorm1d(H1)
         self.bn2 = nn.BatchNorm1d(H2)
-        self.bn3 = nn.BatchNorm1d(H3)
         self.relu1 = nn.LeakyReLU(0.8)
         self.relu2 = nn.LeakyReLU(0.8)
-        self.relu3 = nn.LeakyReLU(0.8)
         self.dropout1 = nn.Dropout(p=self.dropout_rate)
         self.dropout2 = nn.Dropout(p=self.dropout_rate)
 
@@ -45,9 +42,6 @@ class NN(nn.Module):
         x = self.bn2(x)
         x = self.relu2(x)
         x = self.fc3(x)
-        x = self.bn3(x)
-        x = self.relu3(x)
-        x = self.fc4(x)
         # x = self.dropout2(x)
 
         return x
@@ -71,19 +65,19 @@ class LossI(nn.Module):
         return lossi
 
 
-dnn_input = 8
-batch_size = 150
+dnn_input = 9
+batch_size = 256
 epochs = 100
 print_freq = 100
 epochs_since_improvement = 0
 output_folder = r"C:\Users\wt\Desktop\outputviz"
 train_left_des = r"D:\Users\wt\Downloads\production_quality_prediction\train_left.csv"
 test_left_des = r"D:\Users\wt\Downloads\production_quality_prediction\test_left.csv"
-dnn_model = NN(dnn_input, 256, 256, 32, 1)
-# criterion = nn.MSELoss().to(device)
-criterion = LossI(2, 4, 0.95)
-optimizer = Adam(dnn_model.parameters(), lr=3e-4, weight_decay=1e-4)
-train_loader = DataLoader(NeuralNetworkDataset(train_left_des, "train", 4), batch_size=batch_size, shuffle=True)
+dnn_model = NN(dnn_input, 256, 128, 1)
+criterion = nn.MSELoss().to(device)
+#criterion = LossI(2, 4, 0.95)
+optimizer = Adam(dnn_model.parameters(), lr=3e-3)
+train_loader = DataLoader(NeuralNetworkDataset(train_left_des, "train", 1), batch_size=batch_size, shuffle=True)
 test_loader = DataLoader(NeuralNetworkDataset(test_left_des, "test"), batch_size=744, shuffle=False)
 train_loss = []
 test_loss = []

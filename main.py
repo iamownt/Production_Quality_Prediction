@@ -84,13 +84,14 @@ class NN(nn.Module):
 
         return x
 
+
 if __name__ == '__main__':
 
     input_dim = 8
     hidden_dim = 512
     mlp_dims = [256, 128]
     step = 5
-    batch_size = 256
+    batch_size = 12
     epochs = 500
     grad_clip = 5.
     print_freq = 10
@@ -102,7 +103,7 @@ if __name__ == '__main__':
     criterion = nn.MSELoss().to(device)
     optimizer = Adam(lstm_model.parameters(), lr=3e-4)
     train_loader = DataLoader(MiningDataset(train_left_des), batch_size=batch_size, shuffle=True, pin_memory=True)
-    test_loader = DataLoader(MiningDataset(test_left_des), batch_size=744, shuffle=False, pin_memory=True)#670
+    test_loader = DataLoader(MiningDataset(test_left_des), batch_size=744, shuffle=False, pin_memory=True)  # 670
     train_loss = []
     test_loss = []
     best_loss = 999

@@ -101,12 +101,12 @@ class MyDeepFM(torch.nn.Module):
         :param x_dense: Long tensor of size ``(batch_size, num_fields)``
         :param x_sparse: for sparse vector with files
         """
-        embed_x1 = self.embedding1(x_sparse)
-        embed_x2 = self.embedding2(x_sparse)
-        part_1 = self.linear(x_sparse) + self.fm(embed_x1) + self.mlp(embed_x2.view(-1, self.embed_output_dim))
+        # embed_x1 = self.embedding1(x_sparse)
+        # embed_x2 = self.embedding2(x_sparse)
+        # part_1 = self.linear(x_sparse) + self.fm(embed_x1) + self.mlp(embed_x2.view(-1, self.embed_output_dim))
         part_2 = self.mlp2(x_dense)
-        x = self.t1 * part_1 + self.t2 * part_2
-        # x = part_2
+        #x = self.t1 * part_1 + self.t2 * part_2
+        x = part_2
         return x
 
     def rec(self,old):
@@ -135,6 +135,7 @@ class SingleDeepFMDataset(Dataset):
         self.split = split
         self.last_item = last_item
         self.df = df
+        self.df = self.df.iloc[:200*180, :] # TODO
         assert (self.split in {"train", "test"})
         # col_list = [col for col in self.df.columns if 'Flotation' not in col ]
         # if you want to select some col with col_name, use self.df = self.df[col_list]
@@ -188,7 +189,7 @@ mlp_dims = (128, 128)
 addition_hiddens = (256, 256, 32)
 dropout = 0.5
 
-batch_size = 100
+batch_size = 12 #TODO
 epochs = 150
 print_freq = 600
 count = 0

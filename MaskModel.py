@@ -9,10 +9,10 @@ import torch.nn as nn
 from torch.utils.data import DataLoader, Dataset
 from torch.optim import Adam
 from utils import *
-import sys
-# sys.path.extend(['/Users/wt/Documents/GitHub/pytorch-fm'])
-sys.path.extend(['D:\\Github\\pytorch-fm', 'D:/Github/pytorch-fm'])
-from torchfm.layer import FactorizationMachine, FeaturesEmbedding, FeaturesLinear, MultiLayerPerceptron
+# import sys
+# # sys.path.extend(['/Users/wt/Documents/GitHub/pytorch-fm'])
+# sys.path.extend(['D:\\Github\\pytorch-fm', 'D:/Github/pytorch-fm'])
+# from torchfm.layer import FactorizationMachine, FeaturesEmbedding, FeaturesLinear, MultiLayerPerceptron
 
 
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -123,6 +123,34 @@ class RecLoss(nn.Module):
         return torch.sum((error/self.std_1)**2)/count if flag else torch.sum((error/self.std_2)**2)/count
 
 
+class RecLoss_v2(nn.Module):
+
+    def __init__(self, df_std, h_dim, step, alpha, belta, bernoulli=True):
+        super(RecLoss_v2, self).__init__()
+        self.alpha = alpha
+        self.belta = belta
+        self.bernoulli = bernoulli
+        self.std_1 = torch.from_numpy(df_std.values).float()
+        self.std_1 = torch.cat([self.std_1]*step).to(device)
+        self.std_2 = torch.ones(h_dim).to(device)
+
+    def forward(self, flag, preds, labels, mask):
+
+        y1 = preds * ~mask
+        y2 = labels * ~mask
+        y3 = preds * mask
+        y4 = labels * mask
+        mlm_count = torch.sum(~mask)
+        ae_count = torch.sum(mask)
+        mlm_error = y1 - y2
+        ae_error = y3 - y4
+        mlm_loss = torch.sum((mlm_error/self.std_1)**2)/mlm_count if flag else torch.sum((mlm_error/self.std_2)**2)/mlm_count
+        ae_loss = torch.sum((ae_error/self.std_1)**2)/ae_count if flag else torch.sum((ae_error/self.std_2)**2)/ae_count
+        total_loss = self.alpha * mlm_loss + self.belta * ae_loss
+
+        return total_loss
+
+
 class PretrainDataset(Dataset):
     """
     A Pytorch Dataset class to be used in PyTorch DataLoader to create batches
@@ -200,6 +228,8 @@ input_dim = 11
 hidden_dim = 256
 embedding_dim = 24
 step = 5
+alpha = 0.5
+belta = 0.5
 batch_size = 512
 hidden_tr = 12
 mask_c = 0.15
@@ -230,7 +260,7 @@ optimizer = Adam(filter(lambda p: p.requires_grad, ende_model.parameters()), lr=
 path = r"D:\Users\wt\Downloads\52_0.2692.pth.tar"
 ende_model, optimizer = load_checkpoint(ende_model, path, optimizer, False)
 
-criterion = RecLoss(df.std(), hidden_tr, step).to(device)
+criterion = RecLoss_v2(df.std(), hidden_tr, step, alpha, belta).to(device)
 train_loader = DataLoader(PretrainDataset(train_left_des, step), batch_size=batch_size, shuffle=True)
 val_loader = DataLoader(PretrainDataset(val_left_des, step), batch_size=batch_size, shuffle=True)  # shuffle=False
 best_loss = 999
