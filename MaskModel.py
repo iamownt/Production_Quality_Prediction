@@ -243,9 +243,10 @@ hidden_tr = 12
 mask_c = args.mask_rate
 mask_h = args.mask_rate
 
+
 mlp_list = (512, 256, 64)
 dropout = 0
-epochs = 500
+epochs = 50
 grad_clip = 5.
 print_freq = 50
 epochs_since_improvement = 0
@@ -263,6 +264,11 @@ col_leave = ['% Silica Feed', 'Starch Flow', 'Amina Flow', 'Ore Pulp Flow', 'Ore
 col_list = [col for col in df.columns if col in col_leave]
 df = df[col_list]
 
+
+name = str(args.mask_rate)+".log"
+mylog = open(os.path.join(checkpoint_path, name), mode='a', encoding='utf-8')
+
+
 ende_model = EncoderDecoderModel(input_dim, hidden_dim, embedding_dim, step, mask_c, mask_h, hidden_tr, mlp_list, dropout).to(device)
 optimizer = Adam(filter(lambda p: p.requires_grad, ende_model.parameters()), lr=3e-4)
 
@@ -273,11 +279,16 @@ criterion = RecLoss(df.std(), hidden_tr, step).to(device)
 train_loader = DataLoader(PretrainDataset(train_left_des, step), batch_size=batch_size, shuffle=True)
 val_loader = DataLoader(PretrainDataset(val_left_des, step), batch_size=batch_size, shuffle=True)  # shuffle=False
 best_loss = 999
+
+save_dic = dict(train=[], val=[], batch=[])
 for epoch in range(epochs):
-    if epochs_since_improvement == 20:
+    if epochs_since_improvement == 15:
+        print("Reach epochs since improvement: save loss info!",)
+        np.save(name[:-4]+".npy", save_dic)
+        mylog.close()
         break
-    if epochs_since_improvement > 0 and epochs_since_improvement % 10 == 0:
-        adjust_learning_rate(optimizer, 0.8)
+    if epochs_since_improvement > 0 and epochs_since_improvement % 5 == 0:
+        adjust_learning_rate(optimizer, 0.9)
     ende_model.train()
     batch_time = AverageMeter()
     data_time = AverageMeter()
@@ -311,7 +322,9 @@ for epoch in range(epochs):
                   .format(epoch, i, len(train_loader),
                           batch_time=batch_time,
                           data_time=data_time,
-                          loss=losses))
+                          loss=losses), file=mylog)
+        save_dic['batch'].append(losses.avg)
+    save_dic['train'].append(losses.avg)
     # eval the model
     ende_model.eval()
     batch_time = AverageMeter()
@@ -339,7 +352,7 @@ for epoch in range(epochs):
             best_loss = val_mse
             epochs_since_improvement = 0
             torch.save({'epoch': epoch+1, 'state_dict': ende_model.state_dict(), 'best_loss': best_loss,
-                        'optimizer': optimizer.state_dict()}, os.path.join(checkpoint_path,
+                        'optimizer': optimizer.state_dict()}, os.path.join(checkpoint_path, name[:-4],
                                                                            str("%.4f.pth.tar" % best_loss)))
         else:
             epochs_since_improvement += 1
@@ -347,4 +360,8 @@ for epoch in range(epochs):
               'Batch Time {batch_time.val:.3f} ({batch_time.avg:.3f})\t'
               'Loss {loss.val:.4f} ({loss.avg:.4f})\t'.format(i, val_samples,
                                                               batch_time=batch_time,
-                                                              loss=val_losses))
+                                                              loss=val_losses), file=mylog)
+    save_dic['val'].append(val_losses.avg)
+print("Reach last epoch: save loss info!")
+np.save(name[:-4]+".npy", save_dic)
+mylog.close()

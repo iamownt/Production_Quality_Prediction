@@ -204,7 +204,7 @@ val_loader = DataLoader(PretrainDataset(val_left_des, step, col_leave), batch_si
 # shuffle=False
 best_loss = 999
 
-save_dic = dict(train=[], val=[])
+save_dic = dict(train=[], val=[], batch=[])
 for epoch in range(epochs):
     if epochs_since_improvement == 15:
         print("Reach epochs since improvement: save loss info!",)
@@ -245,8 +245,8 @@ for epoch in range(epochs):
                           batch_time=batch_time,
                           data_time=data_time,
                           loss=losses), file=mylog)
-
-        save_dic['train'].append(losses.avg)
+        save_dic['batch'].append(losses.avg)
+    save_dic['train'].append(losses.avg)
     # eval the model
 
     lstm_ed.eval()
