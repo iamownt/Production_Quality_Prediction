@@ -9,7 +9,15 @@ import torch.nn as nn
 from torch.utils.data import DataLoader, Dataset
 from torch.optim import Adam
 from utils import *
+import argparse
 
+
+parser = argparse.ArgumentParser()
+parser.add_argument("--embedding_dim", type=int, default=0, help="embedding dim")
+parser.add_argument("--subset_percent", type=float, default=1, help="leave features rate")
+parser.add_argument("--step", type=int, default=5, help="the LSTM time step")
+parser.add_argument('--flag', type=int, default=True, help="whether remove the 3_hour_delay signal")
+args = parser.parse_args()
 
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
@@ -83,6 +91,7 @@ class LSTMDecoder(nn.Module):
 
         return torch.stack(recon_lis).permute(1, 0, 2)
 
+
 class LSTMEncoderDecoder(nn.Module):
     """
     Use simple two layer LSTM.
@@ -102,13 +111,10 @@ class PretrainDataset(Dataset):
     """
     A Pytorch Dataset class to be used in PyTorch DataLoader to create batches
     """
-    def __init__(self, data_des, step):
+    def __init__(self, data_des, step, col_leave):
         self.step = step
-        # self.df = pd.read_csv(data_des).iloc[:128*180,:]
         self.df = pd.read_csv(data_des)
-        col_leave = ['% Silica Feed', 'Starch Flow', 'Amina Flow', 'Ore Pulp Flow', 'Ore Pulp pH', 'Ore Pulp Density',
-                     'Flotation Column 07 Air Flow', 'Flotation Column 03 Level', 'Flotation Column 07 Level',
-                     '% Silica Concentrate', '2_hour_delay', '3_hour_delay']
+        # self.df = pd.read_csv(data_des).iloc[:128*180,:]
         col_list = [col for col in self.df.columns if col in col_leave]
         self.df = self.df[col_list]
         self.dataset_size = len(self.df) - self.step + 1
@@ -123,6 +129,7 @@ class PretrainDataset(Dataset):
 
     def __len__(self):
         return self.dataset_size
+
 
 def load_checkpoint(model, checkpoint, optimizer, loadOptimizer):
     if checkpoint != 'No':
@@ -149,35 +156,63 @@ def load_checkpoint(model, checkpoint, optimizer, loadOptimizer):
 
 
 input_dim = 11
-hidden_dim = 256
-embedding_dim = 24 # very important parameters to use.
-step = 5
-batch_size = 512
-epochs = 100
+
+hidden_dim = 512
+embedding_dim = args.embedding_dim
+step = args.step
+subset_percent = args.subset_percent
+flag = args.flag
+name = str(embedding_dim)+"_"+str(step)+"_"+str(subset_percent)+"_"+str(int(flag)) + ".log"
+mylog = open(name, mode='a', encoding='utf-8')
+
+col_leave = ['3_hour_delay', '2_hour_delay', '% Silica Feed', '% Iron Feed', 'Amina Flow', 'Ore Pulp pH',
+             'Flotation Column 03 Level', 'Ore Pulp Density', 'Flotation Column 05 Level',
+             'Flotation Column 04 Air Flow', 'Starch Flow', 'Flotation Column 01 Level', 'Flotation Column 05 Air Flow',
+             'Flotation Column 02 Level', 'Flotation Column 01 Air Flow', 'Flotation Column 04 Level',
+             'Flotation Column 07 Level', 'Flotation Column 03 Air Flow', 'Ore Pulp Flow', 'Flotation Column 06 Level',
+             'Flotation Column 06 Air Flow', 'Flotation Column 07 Air Flow', "% Silica Concentrate"]
+
+input_dim = int(len(col_leave)*subset_percent)
+col_leave = col_leave[:input_dim]
+
+if flag:
+    input_dim = input_dim - 1
+    del col_leave[0]
+
+input_dim = input_dim - 1
+assert(input_dim * step > embedding_dim)
+
+batch_size = 1024
+epochs = 60
 grad_clip = 5.
 print_freq = 50
 epochs_since_improvement = 0
-output_folder = "/Users/wt/Downloads/MiningProcessEngineering"
-train_left_des = "/Users/wt/Downloads/MiningProcessEngineering/train_left_now.csv"
-val_left_des = "/Users/wt/Downloads/MiningProcessEngineering/test_left_now.csv"
-# output_folder = r"D:\Datasets\Mining_output"
-# checkpoint_path = r"D:\Datasets\Mining_output\checkpoint"
-# train_left_des = r"D:\Datasets\MiningProcessEngineering\train_left_now.csv"
-# val_left_des = r"D:\Datasets\MiningProcessEngineering\test_left_now.csv"
+# output_folder = "/home/ZihaoMeng/wt/output_lstm_ae/"
+# train_left_des = "/home/ZihaoMeng/wt/dataset/train_left_now.csv"
+# val_left_des = "/home/ZihaoMeng/wt/dataset/test_left_now.csv"
+output_folder = r"D:\Datasets\Mining_output"
+checkpoint_path = r"D:\Datasets\Mining_output\checkpoint"
+train_left_des = r"D:\Datasets\MiningProcessEngineering\train_left_now.csv"
+val_left_des = r"D:\Datasets\MiningProcessEngineering\test_left_now.csv"
 
 
 lstm_ed = LSTMEncoderDecoder(input_dim, hidden_dim, embedding_dim, step).to(device)
 optimizer = Adam(lstm_ed.parameters(), lr=3e-4)
 criterion = nn.MSELoss().to(device)
-train_loader = DataLoader(PretrainDataset(train_left_des, step), batch_size=batch_size, shuffle=True)
-val_loader = DataLoader(PretrainDataset(val_left_des, step), batch_size=batch_size, shuffle=True)
+train_loader = DataLoader(PretrainDataset(train_left_des, step, col_leave), batch_size=batch_size, shuffle=True)
+val_loader = DataLoader(PretrainDataset(val_left_des, step, col_leave), batch_size=batch_size, shuffle=True)
 # shuffle=False
 best_loss = 999
+
+save_dic = dict(train=[], val=[])
 for epoch in range(epochs):
-    if epochs_since_improvement == 10:
+    if epochs_since_improvement == 15:
+        print("Reach epochs since improvement: save loss info!",)
+        np.save(name+".npy", save_dic)
+        mylog.close()
         break
     if epochs_since_improvement > 0 and epochs_since_improvement % 5 == 0:
-        adjust_learning_rate(optimizer, 0.8)
+        adjust_learning_rate(optimizer, 0.9)
     lstm_ed.train()
     batch_time = AverageMeter()
     data_time = AverageMeter()
@@ -209,8 +244,11 @@ for epoch in range(epochs):
                   .format(epoch, i, len(train_loader),
                           batch_time=batch_time,
                           data_time=data_time,
-                          loss=losses))
+                          loss=losses), file=mylog)
+
+        save_dic['train'].append(losses.avg)
     # eval the model
+
     lstm_ed.eval()
     batch_time = AverageMeter()
     val_losses = AverageMeter()
@@ -234,7 +272,7 @@ for epoch in range(epochs):
             best_loss = val_mse
             epochs_since_improvement = 0
             torch.save({'epoch': epoch+1, 'state_dict': lstm_ed.state_dict(), 'best_loss': best_loss,
-                        'optimizer': optimizer.state_dict()}, os.path.join(checkpoint_path,
+                        'optimizer': optimizer.state_dict()}, os.path.join(checkpoint, name,
                                                                            str("%d_%.4f.pth.tar" % (epoch, best_loss))))
         else:
             epochs_since_improvement += 1
@@ -242,4 +280,9 @@ for epoch in range(epochs):
               'Batch Time {batch_time.val:.3f} ({batch_time.avg:.3f})\t'
               'Loss {loss.val:.4f} ({loss.avg:.4f})\t'.format(i,
                                                               batch_time=batch_time,
-                                                              loss=val_losses))
+                                                              loss=val_losses), file=mylog)
+        save_dic['val'].append(val_losses.avg)
+
+print("Reach last epoch: save loss info!")
+np.save(name+".npy", save_dic)
+mylog.close()

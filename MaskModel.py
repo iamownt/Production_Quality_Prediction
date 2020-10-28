@@ -14,6 +14,13 @@ from utils import *
 # sys.path.extend(['D:\\Github\\pytorch-fm', 'D:/Github/pytorch-fm'])
 # from torchfm.layer import FactorizationMachine, FeaturesEmbedding, FeaturesLinear, MultiLayerPerceptron
 
+import argparse
+
+
+parser = argparse.ArgumentParser()
+parser.add_argument("--mask_rate", type=float, default=0.15, help="mask_rate")
+args = parser.parse_args()
+
 
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
@@ -232,8 +239,10 @@ alpha = 0.5
 belta = 0.5
 batch_size = 512
 hidden_tr = 12
-mask_c = 0.15
-mask_h = 0.2
+
+mask_c = args.mask_rate
+mask_h = args.mask_rate
+
 mlp_list = (512, 256, 64)
 dropout = 0
 epochs = 500
@@ -260,7 +269,7 @@ optimizer = Adam(filter(lambda p: p.requires_grad, ende_model.parameters()), lr=
 path = r"D:\Users\wt\Downloads\52_0.2692.pth.tar"
 ende_model, optimizer = load_checkpoint(ende_model, path, optimizer, False)
 
-criterion = RecLoss_v2(df.std(), hidden_tr, step, alpha, belta).to(device)
+criterion = RecLoss(df.std(), hidden_tr, step).to(device)
 train_loader = DataLoader(PretrainDataset(train_left_des, step), batch_size=batch_size, shuffle=True)
 val_loader = DataLoader(PretrainDataset(val_left_des, step), batch_size=batch_size, shuffle=True)  # shuffle=False
 best_loss = 999

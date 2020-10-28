@@ -67,3 +67,15 @@ def do_some_viz(preds, labels, des, name):
     plt.gca().yaxis.set_major_formatter(StrMethodFormatter('{x:,.2f}'))
     plt.savefig(os.path.join(des, name))
     plt.show()
+
+def copy_for_console():
+    import matplotlib.pyplot as plt
+    import numpy as np
+    from sklearn.metrics import mean_squared_error
+    preds = np.load(r"C:\Users\wt\Desktop\outputviz\v_2\preds.npy")
+    labels = np.load(r"C:\Users\wt\Desktop\outputviz\v_2\labels.npy")
+    print(np.sqrt(mean_squared_error(preds, labels)))
+    plt.plot(preds[-670:])
+    plt.plot(labels[-670:])
+    # plt.savefig(r"C:\Users\wt\Desktop\outputviz\v_2\0.756.png")
+    plt.show()

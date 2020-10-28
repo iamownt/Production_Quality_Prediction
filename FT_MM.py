@@ -7,11 +7,25 @@ import matplotlib.pyplot as plt
 import torch
 import torch.nn as nn
 from torch.utils.data import DataLoader, Dataset
-from torch.optim import Adam
+from torch.optim import Adam, SGD
 from utils import *
+from torch.optim.lr_scheduler import CosineAnnealingLR, CosineAnnealingWarmRestarts
+
 
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
+
+# Save the training predictions
+def ttt():
+    path = r"D:\Datasets\Mining_output\checkpoint\34_0.5694.pth.tar"
+    checkpoint = torch.load(path, map_location="cpu")
+    train_loader = DataLoader(MMFineTuneDataset(train_left_des, step), batch_size=3342, shuffle=False)
+    ende_model.load_state_dict(checkpoint['state_dict'])
+
+    for tr, lb in train_loader:
+        train_pred = ende_model(tr)
+        print("Train RMSE: ", torch.sqrt(torch.mean(torch.square(train_pred - lb))))
+        print(train_pred.size())
 
 class LSTMEncoder(nn.Module):
     """Create a Two Layer LSTMEncoder for the MaskModel。
@@ -60,7 +74,7 @@ class MaskAndConcatFT(nn.Module):
 
     def forward(self, con_in, h_in):
         # con_in(B, step*D)
-        h_tr = self.fc(h_in)  # (B, h_tr)
+        h_tr = self.fc(h_in)  # (B, tr_out)
         h_tr = (h_tr - torch.mean(h_tr, dim=0))/torch.std(h_tr, dim=0)
         ori = torch.cat([con_in, h_tr], dim=1)
         return ori
@@ -144,8 +158,8 @@ class MMFineTuneDataset(Dataset):
     """
     def __init__(self, data_des, last_item=5):
         self.last_item = last_item
-        self.df = pd.read_csv(data_des)
-        self.df = pd.read_csv(data_des).iloc[:200*180, :]
+        self.df = pd.read_csv(data_des) # 一共3342个样本
+        # self.df = pd.read_csv(data_des).iloc[:100*180, :]
         col_leave = ['% Silica Feed', 'Starch Flow', 'Amina Flow', 'Ore Pulp Flow', 'Ore Pulp pH', 'Ore Pulp Density',
                      'Flotation Column 07 Air Flow', 'Flotation Column 03 Level', 'Flotation Column 07 Level',
                      '% Silica Concentrate', '2_hour_delay', '3_hour_delay']
@@ -194,14 +208,14 @@ input_dim = 11
 hidden_dim = 256
 embedding_dim = 24 # very important parameters to use.
 step = 5
-batch_size = 12
+batch_size = 64
 hidden_tr = 12
 mlp_list = (512, 256, 64)
-mlp_list2 = (512, 256)  # for finetune
+mlp_list2 = (256, 128)  # for finetune
 dropout = 0
-epochs = 500
+epochs = 56 # 56
 grad_clip = 5.
-print_freq = 50
+print_freq = 1
 epochs_since_improvement = 0
 output_folder = r"D:\Datasets\Mining_output"
 checkpoint_path = r"D:\Datasets\Mining_output\checkpoint"
@@ -215,30 +229,39 @@ col_list = [col for col in df.columns if col in col_leave]
 df = df[col_list]
 
 ende_model = EncoderDecoderModelFT(input_dim, hidden_dim, embedding_dim, step, hidden_tr, mlp_list, mlp_list2, dropout).to(device)
-optimizer = Adam(filter(lambda p: p.requires_grad, ende_model.parameters()), lr=0.003) # TODO 0.003
+optimizer = Adam(filter(lambda p: p.requires_grad, ende_model.parameters()), lr=0.05) # TODO 0.003
+# optimizer = SGD(filter(lambda p: p.requires_grad, ende_model.parameters()), lr=3e-4, momentum=0.9)
 
-path = r"D:\Users\wt\Downloads\pretrained_ende\0.2189.pth.tar"  # TODO 最好是0.1390
-# path = r"D:\Users\wt\Downloads\pretrained_ende\0.1390.pth.tar"
+# ttt()
+
+
+# path = r"D:\Users\wt\Downloads\pretrained_ende\0.2189.pth.tar"  # TODO 最好是0.1390
+path = r"D:\Users\wt\Downloads\pretrained_ende\0.1390.pth.tar"
 ende_model, optimizer = load_checkpoint(ende_model, path, optimizer, False)
 
 criterion = nn.MSELoss().to(device)
+# criterion = nn.L1Loss().to(device)
 train_loader = DataLoader(MMFineTuneDataset(train_left_des, step), batch_size=batch_size, shuffle=True)
 val_loader = DataLoader(MMFineTuneDataset(val_left_des, step), batch_size=744, shuffle=False)  # shuffle=False
+num_cycle = 7 # epochs/8
+scheduler = CosineAnnealingWarmRestarts(optimizer, eta_min=1e-6, T_0=len(train_loader)*num_cycle, T_mult=2)  # T_0=len(train_loader)*num_cycle
+
 best_loss = 999
 history = dict(train=[], val=[])
 for epoch in range(epochs):
-    if epochs_since_improvement == 10:
+    # if epochs_since_improvement == 50:
+    if epoch == 55:
         print("Min train mse: {0} Min val mse: {1}".format(min(history['train']), min(history['val'])))
-        plt.plot(history['train'])
-        plt.plot(history['val'])
+        plt.plot(history['train'][:10])
+        plt.plot(history['val'][10:])
         plt.title('Model loss')
         plt.ylabel('Loss')
         plt.xlabel('Epoch')
         plt.legend(['Train', 'Val'], loc='upper left')
         plt.show()
         break
-    if epochs_since_improvement > 0 and epochs_since_improvement % 5 == 0:
-        adjust_learning_rate(optimizer, 0.9)
+    # if epochs_since_improvement > 0 and epochs_since_improvement % 50 == 0:
+    #     adjust_learning_rate(optimizer, 0.9)
     ende_model.train()
     batch_time = AverageMeter()
     data_time = AverageMeter()
@@ -254,6 +277,7 @@ for epoch in range(epochs):
         if grad_clip is not None:
             clip_gradient(optimizer, grad_clip)
         optimizer.step()
+        scheduler.step()
 
         losses.update(loss.item())
         batch_time.update(time.time() - start)
@@ -262,16 +286,17 @@ for epoch in range(epochs):
 
         start = time.time()
         # print status
-        if i % print_freq == 0:
-            print('Epoch: [{0}][{1}/{2}]\t'
-                  'Batch Time {batch_time.val:.3f} ({batch_time.avg:.3f})\t'
-                  'Data Load Time {data_time.val:.3f} ({data_time.avg:.3f})\t'
-                  'Loss {loss.val:.4f} ({loss.avg:.4f})\t'
-                  .format(epoch, i, len(train_loader),
-                          batch_time=batch_time,
-                          data_time=data_time,
-                          loss=losses))
+        # if i % print_freq == 0:
+    print('Epoch: [{0}][{1}/{2}]\t'
+          'Batch Time {batch_time.val:.3f} ({batch_time.avg:.3f})\t'
+          'Data Load Time {data_time.val:.3f} ({data_time.avg:.3f})\t'
+          'Loss {loss.val:.4f} ({loss.avg:.4f})\t'
+          .format(epoch, i, len(train_loader),
+                  batch_time=batch_time,
+                  data_time=data_time,
+                  loss=losses))
     history["train"].append(losses.avg)
+
     # eval the model
     ende_model.eval()
     batch_time = AverageMeter()
@@ -294,10 +319,10 @@ for epoch in range(epochs):
         history['val'].append(val_mse)
         if val_mse < best_loss:
             best_loss = val_mse
-            np.save(r"C:\Users\wt\Desktop\outputviz\v_2\preds.npy", output.detach().numpy())
-            np.save(r"C:\Users\wt\Desktop\outputviz\v_2\labels.npy", label.detach().numpy())
+            np.save(r"C:\Users\wt\Desktop\outputviz\v_2\val_preds.npy", output.detach().numpy())
+            np.save(r"C:\Users\wt\Desktop\outputviz\v_2\val_labels.npy", label.detach().numpy())
             epochs_since_improvement = 0
-            if val_mse <= 0.59:
+            if val_mse <= 0.57:
                 torch.save({'epoch': epoch+1, 'state_dict': ende_model.state_dict(), 'best_loss': best_loss,
                             'optimizer': optimizer.state_dict()}, os.path.join(checkpoint_path,
                                                                                str("%d_%.4f.pth.tar" % (epoch, best_loss))))
@@ -308,3 +333,4 @@ for epoch in range(epochs):
               'Loss {loss.val:.4f} ({loss.avg:.4f})\t'.format(i,
                                                               batch_time=batch_time,
                                                               loss=val_losses))
+
