@@ -16,7 +16,7 @@ parser = argparse.ArgumentParser()
 parser.add_argument("--embedding_dim", type=int, default=0, help="embedding dim")
 parser.add_argument("--subset_percent", type=float, default=1, help="leave features rate")
 parser.add_argument("--step", type=int, default=5, help="the LSTM time step")
-parser.add_argument('--flag', type=int, default=True, help="whether remove the 3_hour_delay signal")
+parser.add_argument('--flag', type=int, default=True, help="whether  remove the 3_hour_delay signal")
 args = parser.parse_args()
 
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -75,7 +75,6 @@ class LSTMDecoder(nn.Module):
         h = torch.zeros(batch_size, hidden_dim).to(device)
         c = torch.zeros(batch_size, hidden_dim).to(device)
         return h, c
-
     def forward(self, emb_inp):
         # 假定emb_inp是一个batch_size * embedding_size的矩阵，那么将它扩充
         recon_lis = []
@@ -114,7 +113,7 @@ class PretrainDataset(Dataset):
     def __init__(self, data_des, step, col_leave):
         self.step = step
         self.df = pd.read_csv(data_des)
-        # self.df = pd.read_csv(data_des).iloc[:128*180,:]
+        self.df = self.df.iloc[:24*180,:]
         col_list = [col for col in self.df.columns if col in col_leave]
         self.df = self.df[col_list]
         self.dataset_size = len(self.df) - self.step + 1
@@ -155,8 +154,6 @@ def load_checkpoint(model, checkpoint, optimizer, loadOptimizer):
     return model, optimizer
 
 
-input_dim = 11
-
 hidden_dim = 512
 embedding_dim = args.embedding_dim
 step = args.step
@@ -179,10 +176,10 @@ if flag:
     input_dim = input_dim - 1
     del col_leave[0]
 
-input_dim = input_dim - 1
+input_dim = input_dim - 1  # delete the label.
 assert(input_dim * step > embedding_dim)
 
-batch_size = 1024
+batch_size = 24
 epochs = 60
 grad_clip = 5.
 print_freq = 50
@@ -191,7 +188,7 @@ epochs_since_improvement = 0
 # train_left_des = "/home/ZihaoMeng/wt/dataset/train_left_now.csv"
 # val_left_des = "/home/ZihaoMeng/wt/dataset/test_left_now.csv"
 output_folder = r"D:\Datasets\Mining_output"
-checkpoint_path = r"D:\Datasets\Mining_output\checkpoint"
+checkpoint_path = r"D:\Datasets\Mining_output\checkpoint\2135"
 train_left_des = r"D:\Datasets\MiningProcessEngineering\train_left_now.csv"
 val_left_des = r"D:\Datasets\MiningProcessEngineering\test_left_now.csv"
 
@@ -272,7 +269,7 @@ for epoch in range(epochs):
             best_loss = val_mse
             epochs_since_improvement = 0
             torch.save({'epoch': epoch+1, 'state_dict': lstm_ed.state_dict(), 'best_loss': best_loss,
-                        'optimizer': optimizer.state_dict()}, os.path.join(checkpoint, name,
+                        'optimizer': optimizer.state_dict()}, os.path.join(checkpoint_path,
                                                                            str("%d_%.4f.pth.tar" % (epoch, best_loss))))
         else:
             epochs_since_improvement += 1

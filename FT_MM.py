@@ -13,14 +13,17 @@ from torch.optim.lr_scheduler import CosineAnnealingLR, CosineAnnealingWarmResta
 
 
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-
+print(device)
 
 # Save the training predictions
 def ttt():
-    path = r"D:\Datasets\Mining_output\checkpoint\34_0.5694.pth.tar"
+    #path = r"D:\Datasets\Mining_output\checkpoint\34_0.5694.pth.tar"
+    path = r"C:\Users\wt\Desktop\Intergration\experimente_features\18_0.5666.pth.tar"
     checkpoint = torch.load(path, map_location="cpu")
-    train_loader = DataLoader(MMFineTuneDataset(train_left_des, step), batch_size=3342, shuffle=False)
+    train_loader = DataLoader(MMFineTuneDataset(val_left_des, step), batch_size=744, shuffle=False)
     ende_model.load_state_dict(checkpoint['state_dict'])
+    # 这行非常非常非常的重要，之前就是忘记eval，导致参数不一样，效果很差。
+    ende_model.eval()
 
     for tr, lb in train_loader:
         train_pred = ende_model(tr)
@@ -208,10 +211,10 @@ input_dim = 11
 hidden_dim = 256
 embedding_dim = 24 # very important parameters to use.
 step = 5
-batch_size = 64
+batch_size = 3342
 hidden_tr = 12
 mlp_list = (512, 256, 64)
-mlp_list2 = (256, 128)  # for finetune
+mlp_list2 = (128, 64)  # for finetune
 dropout = 0
 epochs = 56 # 56
 grad_clip = 5.
@@ -229,35 +232,43 @@ col_list = [col for col in df.columns if col in col_leave]
 df = df[col_list]
 
 ende_model = EncoderDecoderModelFT(input_dim, hidden_dim, embedding_dim, step, hidden_tr, mlp_list, mlp_list2, dropout).to(device)
-optimizer = Adam(filter(lambda p: p.requires_grad, ende_model.parameters()), lr=0.05) # TODO 0.003
+optimizer = Adam(filter(lambda p: p.requires_grad, ende_model.parameters()), lr=0.003) # TODO 0.003
 # optimizer = SGD(filter(lambda p: p.requires_grad, ende_model.parameters()), lr=3e-4, momentum=0.9)
 
-# ttt()
+ttt()
 
 
 # path = r"D:\Users\wt\Downloads\pretrained_ende\0.2189.pth.tar"  # TODO 最好是0.1390
-path = r"D:\Users\wt\Downloads\pretrained_ende\0.1390.pth.tar"
+path = r"D:\Users\wt\Downloads\pretrained_ende\0.1390.pth.tar" # 最开始的
+path_1 = r"C:\Users\wt\Desktop\MaskModel\rate0.15\0.1229.pth.tar"
+path_2 = r"C:\Users\wt\Desktop\MaskModel\rate0.15\0.1479.pth.tar"
+path_3 = r"C:\Users\wt\Desktop\MaskModel\rate0.15\0.1812.pth.tar"
+path_4 = r"C:\Users\wt\Desktop\MaskModel\rate0.15\0.2136.pth.tar"
+path_5 = r"C:\Users\wt\Desktop\MaskModel\rate0.5\0.4754.pth.tar"
+
 ende_model, optimizer = load_checkpoint(ende_model, path, optimizer, False)
 
 criterion = nn.MSELoss().to(device)
 # criterion = nn.L1Loss().to(device)
 train_loader = DataLoader(MMFineTuneDataset(train_left_des, step), batch_size=batch_size, shuffle=True)
 val_loader = DataLoader(MMFineTuneDataset(val_left_des, step), batch_size=744, shuffle=False)  # shuffle=False
-num_cycle = 7 # epochs/8
+num_cycle = 8 # epochs/8
 scheduler = CosineAnnealingWarmRestarts(optimizer, eta_min=1e-6, T_0=len(train_loader)*num_cycle, T_mult=2)  # T_0=len(train_loader)*num_cycle
 
 best_loss = 999
-history = dict(train=[], val=[])
+history = dict(train=[], val=[], batch=[])
 for epoch in range(epochs):
     # if epochs_since_improvement == 50:
     if epoch == 55:
+        print("Reach last epoch: save loss info!")
+        np.save(os.path.join(r"C:\Users\wt\Desktop\withoutpre", "pretrain") + ".npy", history)
         print("Min train mse: {0} Min val mse: {1}".format(min(history['train']), min(history['val'])))
-        plt.plot(history['train'][:10])
+        # plt.plot(history['train'][:10])
         plt.plot(history['val'][10:])
         plt.title('Model loss')
         plt.ylabel('Loss')
         plt.xlabel('Epoch')
-        plt.legend(['Train', 'Val'], loc='upper left')
+        plt.legend(['Val'], loc='upper left')
         plt.show()
         break
     # if epochs_since_improvement > 0 and epochs_since_improvement % 50 == 0:
@@ -287,6 +298,7 @@ for epoch in range(epochs):
         start = time.time()
         # print status
         # if i % print_freq == 0:
+        history["batch"].append(losses.avg)
     print('Epoch: [{0}][{1}/{2}]\t'
           'Batch Time {batch_time.val:.3f} ({batch_time.avg:.3f})\t'
           'Data Load Time {data_time.val:.3f} ({data_time.avg:.3f})\t'
@@ -334,3 +346,5 @@ for epoch in range(epochs):
                                                               batch_time=batch_time,
                                                               loss=val_losses))
 
+print("Reach last epoch: save loss info!")
+np.save("pretrain"+".npy", history)

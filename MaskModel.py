@@ -266,6 +266,9 @@ df = df[col_list]
 
 
 name = str(args.mask_rate)+".log"
+pat = os.path.join(checkpoint_path, name[:-4])
+if not os.path.exists(pat):
+    os.mkdir(pat)
 mylog = open(os.path.join(checkpoint_path, name), mode='a', encoding='utf-8')
 
 

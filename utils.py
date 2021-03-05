@@ -79,3 +79,17 @@ def copy_for_console():
     plt.plot(labels[-670:])
     # plt.savefig(r"C:\Users\wt\Desktop\outputviz\v_2\0.756.png")
     plt.show()
+
+def abc():
+    import matplotlib.pyplot as plt
+    import numpy as np
+    a = np.load(r"C:\Users\wt\Desktop\withoutpre\type1_30.npy", allow_pickle=True)
+    b = np.load(r"C:\Users\wt\Desktop\withoutpre\type2_30.npy", allow_pickle=True)
+    c = np.load(r"C:\Users\wt\Desktop\withoutpre\type3_30.npy", allow_pickle=True)
+    a = a.tolist()
+    b = b.tolist()
+    c = c.tolist()
+    plt.plot(a['val'], label='1')
+    plt.plot(b['val'], label='2')
+    plt.plot(c['val'], label='3')
+    plt.legend(loc='upper right')
